@@ -7,8 +7,11 @@ import (
 	"strings"
 )
 
-func main() {
+type RequestHandler func(req string) (body string)
 
+var handlers map[string]map[string]RequestHandler
+
+func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
 	if err != nil {
 		fmt.Println("Failed to bind to port 4221")
@@ -19,6 +22,13 @@ func main() {
 		_ = l.Close()
 	}(l)
 	fmt.Println("Server is listening.")
+
+	handlers = map[string]map[string]RequestHandler{
+		"GET": {
+			"":     mainPageHandler,
+			"echo": echoHandler,
+		},
+	}
 
 	for {
 		conn, err := l.Accept()
@@ -42,49 +52,45 @@ func handleRequest(conn net.Conn) {
 		return
 	}
 
-	request := strings.Split(string(buf[:l]), "\r\n")
-	fmt.Printf("Message received: %s\n", request)
-
-	if checkRequest(request[0]) {
-		_, err = conn.Write([]byte(generateSuccessResponse()))
-
-	} else {
+	request := strings.Fields(strings.Split(string(buf[:l]), "\r\n")[0])
+	handler, isExist := handlers[request[0]][strings.Split(request[1], "/")[1]]
+	if isExist == false {
 		_, err = conn.Write([]byte(generateNotFoundResponse()))
+		if err != nil {
+			fmt.Println("Error writing status to connection: ", err.Error())
+			return
+		}
+		return
 	}
 
+	_, err = conn.Write([]byte(generateSuccessResponse(handler(request[1]))))
 	if err != nil {
 		fmt.Println("Error writing status to connection: ", err.Error())
 		return
 	}
 }
 
-func checkRequest(req string) bool {
-	requestLine := strings.Fields(req)
-	if len(requestLine) < 3 {
-		fmt.Println("Invalid request.")
-		return false
-	}
-	if requestLine[0] != "GET" || requestLine[1] != "/" {
-		fmt.Println("Not found page.")
-		return false
-	}
-
-	return true
+func mainPageHandler(_ string) (body string) {
+	return
 }
 
-func generateSuccessResponse() string {
-	return generateResponse(200, "OK")
+func echoHandler(req string) (body string) {
+	return strings.Split(req, "/")[2]
+}
+
+func generateSuccessResponse(body string) string {
+	return generateResponse(body, 200, "OK")
 }
 
 func generateNotFoundResponse() string {
-	return generateResponse(404, "Not Found")
+	return generateResponse("", 404, "Not Found")
 }
 
-func generateResponse(code int, status string) string {
+func generateResponse(body string, code int, status string) string {
 	var builder strings.Builder
 	builder.WriteString(generateStatusLine(code, status))
-	builder.WriteString(generateHeaders())
-	builder.WriteString(generateBody())
+	builder.WriteString(generateHeaders(body))
+	builder.WriteString(generateBody(body))
 	return builder.String()
 }
 
@@ -92,11 +98,10 @@ func generateStatusLine(code int, status string) string {
 	return fmt.Sprintf("HTTP/1.1 %d %s\r\n", code, status)
 }
 
-func generateHeaders() (h string) {
-	h = "\r\n"
-	return
+func generateHeaders(body string) string {
+	return fmt.Sprintf("Content-Type: text/plain\r\nContent-Length: %d\r\n\r\n", len(body))
 }
 
-func generateBody() (h string) {
-	return
+func generateBody(context string) string {
+	return context
 }
