@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-type RequestHandler func(req string) (body string)
+type RequestHandler func(req string, userAgent map[string]string) (body string)
 
 var handlers map[string]map[string]RequestHandler
 
@@ -25,8 +25,9 @@ func main() {
 
 	handlers = map[string]map[string]RequestHandler{
 		"GET": {
-			"":     mainPageHandler,
-			"echo": echoHandler,
+			"":           mainPageHandler,
+			"echo":       echoHandler,
+			"user-agent": userAgentHandler,
 		},
 	}
 
@@ -52,7 +53,18 @@ func handleRequest(conn net.Conn) {
 		return
 	}
 
-	request := strings.Fields(strings.Split(string(buf[:l]), "\r\n")[0])
+	sr := strings.Split(string(buf[:l]), "\r\n")
+	headers := make(map[string]string)
+	request := strings.Fields(sr[0])
+
+	for _, h := range sr[1:] {
+		l := strings.Fields(h)
+		if len(l) < 2 {
+			continue
+		}
+		headers[l[0][:len(l[0])-1]] = l[1]
+	}
+
 	handler, isExist := handlers[request[0]][strings.Split(request[1], "/")[1]]
 	if isExist == false {
 		_, err = conn.Write([]byte(generateNotFoundResponse()))
@@ -63,18 +75,22 @@ func handleRequest(conn net.Conn) {
 		return
 	}
 
-	_, err = conn.Write([]byte(generateSuccessResponse(handler(request[1]))))
+	_, err = conn.Write([]byte(generateSuccessResponse(handler(request[1], headers))))
 	if err != nil {
 		fmt.Println("Error writing status to connection: ", err.Error())
 		return
 	}
 }
 
-func mainPageHandler(_ string) (body string) {
+func mainPageHandler(_ string, _ map[string]string) (body string) {
 	return
 }
 
-func echoHandler(req string) (body string) {
+func userAgentHandler(_ string, userAgent map[string]string) string {
+	return userAgent["User-Agent"]
+}
+
+func echoHandler(req string, _ map[string]string) (body string) {
 	return strings.Split(req, "/")[2]
 }
 
