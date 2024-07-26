@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
-type RequestHandler func(req string, userAgent map[string]string) (body string)
+type RequestHandler func(req string, userAgent map[string]string) (body string, header map[string]string, code string)
 
 var handlers map[string]map[string]RequestHandler
 
@@ -28,6 +29,7 @@ func main() {
 			"":           mainPageHandler,
 			"echo":       echoHandler,
 			"user-agent": userAgentHandler,
+			"files":      filesHandler,
 		},
 	}
 
@@ -82,40 +84,87 @@ func handleRequest(conn net.Conn) {
 	}
 }
 
-func mainPageHandler(_ string, _ map[string]string) (body string) {
-	return
+func mainPageHandler(_ string, _ map[string]string) (body string, header map[string]string, code string) {
+	return "", nil, "200"
 }
 
-func userAgentHandler(_ string, userAgent map[string]string) string {
-	return userAgent["User-Agent"]
+func userAgentHandler(_ string, userAgent map[string]string) (body string, header map[string]string, code string) {
+	body = userAgent["User-Agent"]
+	return body,
+		map[string]string{
+			"Content-Type":   "text/plain",
+			"Content-Length": strconv.Itoa(len(body)),
+		},
+		"200"
 }
 
-func echoHandler(req string, _ map[string]string) (body string) {
-	return strings.Split(req, "/")[2]
+func echoHandler(req string, _ map[string]string) (body string, header map[string]string, code string) {
+	body = strings.Split(req, "/")[2]
+	return body,
+		map[string]string{
+			"Content-Type":   "text/plain",
+			"Content-Length": strconv.Itoa(len(body)),
+		},
+		"200"
 }
 
-func generateSuccessResponse(body string) string {
-	return generateResponse(body, 200, "OK")
+func filesHandler(req string, _ map[string]string) (body string, header map[string]string, code string) {
+	data, err := os.ReadFile(fmt.Sprintf("%s%s", os.Args[2], strings.Split(req, "/")[2]))
+	if err != nil {
+		return "",
+			map[string]string{
+				"Content-Type":   "text/plain",
+				"Content-Length": "0",
+			},
+			"404"
+	}
+
+	body = string(data)
+	return body,
+		map[string]string{
+			"Content-Type":   "application/octet-stream",
+			"Content-Length": strconv.Itoa(len(body)),
+		},
+		"200"
+}
+
+func generateSuccessResponse(body string, header map[string]string, code string) string {
+	return generateResponse(body, header, code)
 }
 
 func generateNotFoundResponse() string {
-	return generateResponse("", 404, "Not Found")
+	return generateResponse("", nil, "404")
 }
 
-func generateResponse(body string, code int, status string) string {
+func generateResponse(body string, header map[string]string, code string) string {
 	var builder strings.Builder
-	builder.WriteString(generateStatusLine(code, status))
-	builder.WriteString(generateHeaders(body))
+	builder.WriteString(generateStatusLine(code))
+	builder.WriteString(generateHeaders(header))
 	builder.WriteString(generateBody(body))
 	return builder.String()
 }
 
-func generateStatusLine(code int, status string) string {
-	return fmt.Sprintf("HTTP/1.1 %d %s\r\n", code, status)
+func generateStatusLine(code string) string {
+	var status string
+	switch code {
+	case "200":
+		status = "OK"
+	case "404":
+		status = "Not Found"
+	default:
+		status = "Error"
+	}
+
+	return fmt.Sprintf("HTTP/1.1 %s %s\r\n", code, status)
 }
 
-func generateHeaders(body string) string {
-	return fmt.Sprintf("Content-Type: text/plain\r\nContent-Length: %d\r\n\r\n", len(body))
+func generateHeaders(body map[string]string) string {
+	var h strings.Builder
+	for k, v := range body {
+		h.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
+	}
+	h.WriteString("\r\n")
+	return h.String()
 }
 
 func generateBody(context string) string {
