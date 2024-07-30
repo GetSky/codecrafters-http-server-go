@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"net"
 	"os"
@@ -8,7 +10,7 @@ import (
 	"strings"
 )
 
-type RequestHandler func(r Request) (body string, header map[string]string, code string)
+type RequestHandler func(r Request) (rsp Response)
 
 var handlers map[string]map[string]RequestHandler
 
@@ -17,6 +19,12 @@ type Request struct {
 	path    string
 	headers map[string]string
 	body    string
+}
+
+type Response struct {
+	body    string
+	headers map[string]string
+	code    string
 }
 
 func main() {
@@ -85,8 +93,16 @@ func handleRequest(conn net.Conn) {
 	}
 
 	handler, isExist := handlers[r.method][strings.Split(r.path, "/")[1]]
+
+	var encoding string
+	if r.headers["Accept-Encoding"] == "gzip" {
+		encoding = "gzip"
+	} else {
+		encoding = "plain/text"
+	}
+
 	if isExist == false {
-		_, err = conn.Write([]byte(generateNotFoundResponse()))
+		_, err = conn.Write([]byte(generateResponse(Response{"", nil, "404"}, encoding)))
 		if err != nil {
 			fmt.Println("Error writing status to connection: ", err.Error())
 			return
@@ -94,82 +110,97 @@ func handleRequest(conn net.Conn) {
 		return
 	}
 
-	_, err = conn.Write([]byte(generateSuccessResponse(handler(r))))
+	_, err = conn.Write([]byte(generateResponse(handler(r), encoding)))
 	if err != nil {
 		fmt.Println("Error writing status to connection: ", err.Error())
 		return
 	}
 }
 
-func uploadFileHandler(r Request) (body string, header map[string]string, code string) {
+func uploadFileHandler(r Request) Response {
 	err := os.WriteFile(fmt.Sprintf("%s%s", os.Args[2], strings.Split(r.path, "/")[2]), []byte(r.body), 0644)
 	if err != nil {
-		return "", nil, "500"
+		return Response{"", nil, "500"}
+
 	}
 
-	return "",
+	return Response{
+		"",
 		map[string]string{
 			"Content-Type": "text/plain",
 		},
-		"201"
+		"201",
+	}
 }
-func mainPageHandler(_ Request) (body string, header map[string]string, code string) {
-	return "", nil, "200"
+func mainPageHandler(_ Request) Response {
+	return Response{"", nil, "200"}
 }
 
-func userAgentHandler(r Request) (body string, header map[string]string, code string) {
-	body = r.headers["User-Agent"]
-	return body,
+func userAgentHandler(r Request) Response {
+	body := r.headers["User-Agent"]
+	return Response{
+		body,
 		map[string]string{
 			"Content-Type":   "text/plain",
 			"Content-Length": strconv.Itoa(len(body)),
 		},
-		"200"
+		"200",
+	}
 }
 
-func echoHandler(r Request) (body string, header map[string]string, code string) {
-	body = strings.Split(r.path, "/")[2]
-	return body,
+func echoHandler(r Request) Response {
+	body := strings.Split(r.path, "/")[2]
+	return Response{
+		body,
 		map[string]string{
 			"Content-Type":   "text/plain",
 			"Content-Length": strconv.Itoa(len(body)),
 		},
-		"200"
+		"200",
+	}
 }
 
-func filesHandler(r Request) (body string, header map[string]string, code string) {
+func filesHandler(r Request) Response {
 	data, err := os.ReadFile(fmt.Sprintf("%s%s", os.Args[2], strings.Split(r.path, "/")[2]))
 	if err != nil {
-		return "",
+		return Response{
+			"",
 			map[string]string{
 				"Content-Type":   "text/plain",
 				"Content-Length": "0",
 			},
-			"404"
+			"404",
+		}
 	}
 
-	body = string(data)
-	return body,
+	body := string(data)
+	return Response{
+		body,
 		map[string]string{
 			"Content-Type":   "application/octet-stream",
 			"Content-Length": strconv.Itoa(len(body)),
 		},
-		"200"
+		"200",
+	}
 }
 
-func generateSuccessResponse(body string, header map[string]string, code string) string {
-	return generateResponse(body, header, code)
-}
-
-func generateNotFoundResponse() string {
-	return generateResponse("", nil, "404")
-}
-
-func generateResponse(body string, header map[string]string, code string) string {
+func generateResponse(r Response, encoding string) string {
 	var builder strings.Builder
-	builder.WriteString(generateStatusLine(code))
-	builder.WriteString(generateHeaders(header))
-	builder.WriteString(generateBody(body))
+
+	if encoding == "gzip" {
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		_, err := zw.Write([]byte(r.body))
+		if err != nil {
+			fmt.Println("Error writing status to connection: ", err.Error())
+		}
+		r.headers["Content-Encoding"] = "gzip"
+		r.body = buf.String()
+	}
+
+	builder.WriteString(generateStatusLine(r.code))
+	builder.WriteString(generateHeaders(r.headers))
+	builder.WriteString(generateBody(r.body))
 	return builder.String()
 }
 
@@ -189,9 +220,9 @@ func generateStatusLine(code string) string {
 	return fmt.Sprintf("HTTP/1.1 %s %s\r\n", code, status)
 }
 
-func generateHeaders(body map[string]string) string {
+func generateHeaders(headers map[string]string) string {
 	var h strings.Builder
-	for k, v := range body {
+	for k, v := range headers {
 		h.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
 	}
 	h.WriteString("\r\n")
