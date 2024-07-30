@@ -8,9 +8,16 @@ import (
 	"strings"
 )
 
-type RequestHandler func(req string, userAgent map[string]string) (body string, header map[string]string, code string)
+type RequestHandler func(r Request) (body string, header map[string]string, code string)
 
 var handlers map[string]map[string]RequestHandler
+
+type Request struct {
+	method  string
+	path    string
+	headers map[string]string
+	body    string
+}
 
 func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
@@ -30,6 +37,9 @@ func main() {
 			"echo":       echoHandler,
 			"user-agent": userAgentHandler,
 			"files":      filesHandler,
+		},
+		"POST": {
+			"files": uploadFileHandler,
 		},
 	}
 
@@ -62,12 +72,19 @@ func handleRequest(conn net.Conn) {
 	for _, h := range sr[1:] {
 		l := strings.Fields(h)
 		if len(l) < 2 {
-			continue
+			break
 		}
 		headers[l[0][:len(l[0])-1]] = l[1]
 	}
 
-	handler, isExist := handlers[request[0]][strings.Split(request[1], "/")[1]]
+	r := Request{
+		method:  request[0],
+		path:    request[1],
+		headers: headers,
+		body:    sr[len(sr)-1],
+	}
+
+	handler, isExist := handlers[r.method][strings.Split(r.path, "/")[1]]
 	if isExist == false {
 		_, err = conn.Write([]byte(generateNotFoundResponse()))
 		if err != nil {
@@ -77,19 +94,31 @@ func handleRequest(conn net.Conn) {
 		return
 	}
 
-	_, err = conn.Write([]byte(generateSuccessResponse(handler(request[1], headers))))
+	_, err = conn.Write([]byte(generateSuccessResponse(handler(r))))
 	if err != nil {
 		fmt.Println("Error writing status to connection: ", err.Error())
 		return
 	}
 }
 
-func mainPageHandler(_ string, _ map[string]string) (body string, header map[string]string, code string) {
+func uploadFileHandler(r Request) (body string, header map[string]string, code string) {
+	err := os.WriteFile(fmt.Sprintf("%s%s", os.Args[2], strings.Split(r.path, "/")[2]), []byte(r.body), 0644)
+	if err != nil {
+		return "", nil, "500"
+	}
+
+	return "",
+		map[string]string{
+			"Content-Type": "text/plain",
+		},
+		"201"
+}
+func mainPageHandler(_ Request) (body string, header map[string]string, code string) {
 	return "", nil, "200"
 }
 
-func userAgentHandler(_ string, userAgent map[string]string) (body string, header map[string]string, code string) {
-	body = userAgent["User-Agent"]
+func userAgentHandler(r Request) (body string, header map[string]string, code string) {
+	body = r.headers["User-Agent"]
 	return body,
 		map[string]string{
 			"Content-Type":   "text/plain",
@@ -98,8 +127,8 @@ func userAgentHandler(_ string, userAgent map[string]string) (body string, heade
 		"200"
 }
 
-func echoHandler(req string, _ map[string]string) (body string, header map[string]string, code string) {
-	body = strings.Split(req, "/")[2]
+func echoHandler(r Request) (body string, header map[string]string, code string) {
+	body = strings.Split(r.path, "/")[2]
 	return body,
 		map[string]string{
 			"Content-Type":   "text/plain",
@@ -108,8 +137,8 @@ func echoHandler(req string, _ map[string]string) (body string, header map[strin
 		"200"
 }
 
-func filesHandler(req string, _ map[string]string) (body string, header map[string]string, code string) {
-	data, err := os.ReadFile(fmt.Sprintf("%s%s", os.Args[2], strings.Split(req, "/")[2]))
+func filesHandler(r Request) (body string, header map[string]string, code string) {
+	data, err := os.ReadFile(fmt.Sprintf("%s%s", os.Args[2], strings.Split(r.path, "/")[2]))
 	if err != nil {
 		return "",
 			map[string]string{
@@ -149,6 +178,8 @@ func generateStatusLine(code string) string {
 	switch code {
 	case "200":
 		status = "OK"
+	case "201":
+		status = "Created"
 	case "404":
 		status = "Not Found"
 	default:
