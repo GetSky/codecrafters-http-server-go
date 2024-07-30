@@ -78,11 +78,11 @@ func handleRequest(conn net.Conn) {
 	request := strings.Fields(sr[0])
 
 	for _, h := range sr[1:] {
-		l := strings.Fields(h)
+		l := strings.Split(h, ":")
 		if len(l) < 2 {
 			break
 		}
-		headers[l[0][:len(l[0])-1]] = l[1]
+		headers[strings.TrimSpace(l[0])] = strings.TrimSpace(l[1])
 	}
 
 	r := Request{
@@ -94,11 +94,13 @@ func handleRequest(conn net.Conn) {
 
 	handler, isExist := handlers[r.method][strings.Split(r.path, "/")[1]]
 
-	var encoding string
-	if r.headers["Accept-Encoding"] == "gzip" {
-		encoding = "gzip"
-	} else {
-		encoding = "plain/text"
+	encoding := "text/plain"
+	encoders := strings.Split(r.headers["Accept-Encoding"], ",")
+	fmt.Printf("Error writing status to connection: %s\n", encoders)
+	for _, enc := range encoders {
+		if strings.TrimSpace(enc) == "gzip" {
+			encoding = "gzip"
+		}
 	}
 
 	if isExist == false {
