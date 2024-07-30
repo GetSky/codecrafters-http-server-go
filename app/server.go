@@ -96,7 +96,6 @@ func handleRequest(conn net.Conn) {
 
 	encoding := "text/plain"
 	encoders := strings.Split(r.headers["Accept-Encoding"], ",")
-	fmt.Printf("Error writing status to connection: %s\n", encoders)
 	for _, enc := range encoders {
 		if strings.TrimSpace(enc) == "gzip" {
 			encoding = "gzip"
@@ -143,8 +142,7 @@ func userAgentHandler(r Request) Response {
 	return Response{
 		body,
 		map[string]string{
-			"Content-Type":   "text/plain",
-			"Content-Length": strconv.Itoa(len(body)),
+			"Content-Type": "text/plain",
 		},
 		"200",
 	}
@@ -155,8 +153,7 @@ func echoHandler(r Request) Response {
 	return Response{
 		body,
 		map[string]string{
-			"Content-Type":   "text/plain",
-			"Content-Length": strconv.Itoa(len(body)),
+			"Content-Type": "text/plain",
 		},
 		"200",
 	}
@@ -168,8 +165,7 @@ func filesHandler(r Request) Response {
 		return Response{
 			"",
 			map[string]string{
-				"Content-Type":   "text/plain",
-				"Content-Length": "0",
+				"Content-Type": "text/plain",
 			},
 			"404",
 		}
@@ -179,8 +175,7 @@ func filesHandler(r Request) Response {
 	return Response{
 		body,
 		map[string]string{
-			"Content-Type":   "application/octet-stream",
-			"Content-Length": strconv.Itoa(len(body)),
+			"Content-Type": "application/octet-stream",
 		},
 		"200",
 	}
@@ -194,14 +189,17 @@ func generateResponse(r Response, encoding string) string {
 		zw := gzip.NewWriter(&buf)
 		_, err := zw.Write([]byte(r.body))
 		if err != nil {
-			fmt.Println("Error writing status to connection: ", err.Error())
+			fmt.Println("Error zip: ", err.Error())
+		}
+		if err := zw.Close(); err != nil {
+			fmt.Println("Error close: ", err.Error())
 		}
 		r.headers["Content-Encoding"] = "gzip"
 		r.body = buf.String()
 	}
 
 	builder.WriteString(generateStatusLine(r.code))
-	builder.WriteString(generateHeaders(r.headers))
+	builder.WriteString(generateHeaders(r))
 	builder.WriteString(generateBody(r.body))
 	return builder.String()
 }
@@ -222,11 +220,12 @@ func generateStatusLine(code string) string {
 	return fmt.Sprintf("HTTP/1.1 %s %s\r\n", code, status)
 }
 
-func generateHeaders(headers map[string]string) string {
+func generateHeaders(r Response) string {
 	var h strings.Builder
-	for k, v := range headers {
+	for k, v := range r.headers {
 		h.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
 	}
+	h.WriteString(fmt.Sprintf("Content-Length: %s\r\n", strconv.Itoa(len(r.body))))
 	h.WriteString("\r\n")
 	return h.String()
 }
